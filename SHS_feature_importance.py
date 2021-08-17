@@ -1,0 +1,361 @@
+import easygraph as eg 
+import numpy as np
+import pandas as pd
+import networkx as nx 
+import time
+from imblearn.over_sampling import SMOTE
+from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
+from sklearn.metrics import classification_report
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import GridSearchCV
+from xgboost import plot_importance
+from matplotlib import  pyplot
+import warnings
+warnings.filterwarnings("ignore")
+
+G1=eg.Graph()
+G1.add_edges_from_file("/users/sds/downloads/dataset_WWW2019/dataset_WWW_friendship_old.txt")
+SHS1=eg.constraint(G1)
+SHS1=sorted(SHS1.items(), key=lambda d: d[1])
+
+
+G2=eg.Graph()
+G2.add_edges_from_file("/users/sds/downloads/dataset_WWW2019/dataset_WWW_friendship_new.txt")
+SHS2=eg.constraint(G2)
+SHS2=sorted(SHS2.items(), key=lambda d: d[1])
+
+
+S1=set()
+k=0
+for i in SHS1:
+    if k<2000:
+        S1.add(i[0])
+        k+=1
+    else:
+        break
+
+
+S2=set()
+k=0
+for i in SHS2:
+    if k<2000:
+        S2.add(i[0])
+        k+=1
+    else:
+        break
+
+U1=list(set(S1).difference(set(S2))) #old
+U2=list(set(S2).difference(set(S1)))  #new
+U3=list(set(S1).intersection(set(S2)))  #still
+
+
+
+import random
+U4=[]
+while len(U4)<1000:
+    t=random.sample(SHS1, 1)
+    if t not in U1 and t not in U2 and t not in U3:
+        U4.append(t[0][0])
+        
+
+
+venue1={}
+venue2={}
+venue3={}
+venue4={}
+with open("/users/sds/downloads/dataset_WWW2019/dataset_WWW_Checkins_anonymized.txt","r") as f:
+    list1 = f.readlines()
+    for i in range(0, len(list1)):
+        list1[i] = list1[i].strip('\n')
+        list1[i] =list1[i].split( )
+    for i in list1:
+        if i[0] in U1:
+            if i[1] not in venue1.keys():
+                venue1[i[1]]=1
+            else:
+                venue1[i[1]]+=1
+        elif i[0] in U2:
+            if i[1] not in venue2.keys():
+                venue2[i[1]]=1
+            else:
+                venue2[i[1]]+=1
+        elif i[0] in U3:
+            if i[1] not in venue3.keys():
+                venue3[i[1]]=1
+            else:
+                venue3[i[1]]+=1
+        elif i[0] in U4:
+            if i[1] not in venue4.keys():
+                venue4[i[1]]=1
+            else:
+                venue4[i[1]]+=1
+
+
+
+with open("/users/sds/downloads/dataset_WWW2019/raw_POIs.txt","r") as f:
+    list2 = f.readlines()
+    for i in range(0, len(list2)):
+        list2[i] = list2[i].strip('\n')
+        list2[i] =list2[i].split( )
+
+
+
+
+import time
+checklist=[]
+for i in list1:
+    if i[0] in U1 or i[0] in U3:
+        s=i[2]+' '+i[3]+' '+i[4]+' '+i[5]+' '+i[7]
+        t=time.mktime(time.strptime(s,"%a %b %d %H:%M:%S %Y"))
+        if i[8][0]=='-':
+            t-=int(i[8][1:])*60
+        else:
+            t+=int(i[8])*60
+        ss=time.ctime(t) 
+        s1=i[0]
+        s2=i[1]
+        s3=ss[0:3]
+        s4=ss[4:7]
+        ti=int(int(ss[-13:-11])/4)
+        s5=str(ti)
+        s6=str(t)
+        k=[]
+        k.append(s1)#user
+        k.append(s2)#venue
+        k.append(s3)#week
+        k.append(s4)#month
+        k.append(s5)#timeslot
+        k.append(s6)#time
+        checklist.append(k)
+        
+with open("/users/sds/downloads/dataset_WWW2019/checklist13.txt","w") as f:
+    for i in checklist:
+        for j in range(0, len(i)):
+            f.write(str(i[j]))
+            f.write(' ')  
+        f.write('\n')
+        
+        
+        
+venuelist=[]
+for i in list2:
+    if i[0] in venue1.keys() or i[0] in venue3.keys():
+        category=''
+        for k in range(3,len(i)-1):
+            category+=i[k]
+            if k!=len(i)-2:
+                category +=' '
+        k=[]
+        k.append(i[0])#venue ID
+        k.append(category)#category
+        k.append(i[-1])#country
+        k.append(i[1])#Latitude
+        k.append(i[2])#Longitude
+        venuelist.append(k)
+        
+with open("/users/sds/downloads/dataset_WWW2019/venuelist13.txt","w") as f:
+    for i in venuelist:
+        for j in range(0, len(i)):
+            f.write(str(i[j]))
+            f.write(' ')  
+        f.write('\n')
+        
+        
+        
+userlist={}
+for i in checklist:   
+    for j in venuelist:
+        if i[1]==j[0]:           
+            if i[0] not in userlist:
+                userlist[i[0]]={}
+                userlist[i[0]]['checkin']=[]
+                userlist[i[0]]['checkin'].append(float(i[5]))
+                userlist[i[0]]['country']={}
+                userlist[i[0]]['country'][j[2]]=1
+                userlist[i[0]]['poi']={}
+                userlist[i[0]]['poi'][i[1]]=1
+                userlist[i[0]]['category']=[]
+                userlist[i[0]]['category'].append(j[1])
+                userlist[i[0]]['hour']=[]
+                userlist[i[0]]['hour'].append(i[4])
+                userlist[i[0]]['day']=[]
+                userlist[i[0]]['day'].append(i[2])
+                userlist[i[0]]['month']=[]
+                userlist[i[0]]['month'].append(i[3])
+                userlist[i[0]]['lalong']=[]
+                userlist[i[0]]['lalong'].append([float(j[3]),float(j[4])])
+            else:
+                userlist[i[0]]['checkin'].append(float(i[5]))
+                if j[2] not in userlist[i[0]]['country']:
+                    userlist[i[0]]['country'][j[2]]=1
+                else:
+                    userlist[i[0]]['country'][j[2]]+=1
+                if i[1] not in userlist[i[0]]['poi']:
+                    userlist[i[0]]['poi'][i[1]]=1
+                else:
+                    userlist[i[0]]['poi'][i[1]]+=1
+                userlist[i[0]]['category'].append(j[1])
+                userlist[i[0]]['hour'].append(i[4])
+                userlist[i[0]]['day'].append(i[2])
+                userlist[i[0]]['month'].append(i[3])
+                userlist[i[0]]['lalong'].append([float(j[3]),float(j[4])])
+                
+            
+shs_constraint={}
+shs_effective_size={}
+shs_efficiency={}
+shs_hierarchy={}
+shs_constraint=eg.constraint(G1)
+shs_effective_size=eg.effective_size(G1)
+shs_efficiency=eg.efficiency(G1)
+shs_hierarchy=eg.hierarchy(G1)
+
+shs_degree={}
+shs_degree=G1.degree()
+
+Gnx=nx.Graph()
+for i in G1.edges:
+    (u,v,t)=i
+    Gnx.add_edge(u,v)
+
+shs_betweenness_centrality=nx.betweenness_centrality(Gnx, k=1000)
+
+
+#计算信息熵的方法
+def calc_ent(x):
+    x_value_list = set([x[i] for i in range(x.shape[0])])
+    ent = 0.0
+    for x_value in x_value_list:
+        p = float(x[x == x_value].shape[0]) / x.shape[0]
+        logp = np.log2(p)
+        ent -= p * logp
+    return ent
+
+
+data = {'num_checkin':[],
+        'ave_checkin':[],
+        'var_checkin':[],
+        'entropy_hour':[],
+        'entropy_day':[],
+        'entropy_month':[],
+        'entropy_category':[],
+        'main_country':[],
+        'num_poi_visit':[],
+        'ave_latitude':[],
+        'ave_longitude':[],
+        'var_latitude':[],
+        'var_longitude':[],
+        'constraint':[],
+        'effective_size':[],
+        'efficiency':[],
+        'hierarchy':[],
+        'betweenness_centrality':[],
+        #'closeness_centrality':[],
+        #'flowbetweenness_centrality':[],
+        'degree':[],
+        'label':[]
+       }
+
+
+for i in userlist:     
+    data1=np.array(userlist[i]['hour'])
+    data2=np.array(userlist[i]['day'])
+    data3=np.array(userlist[i]['month'])
+    data4=np.array(userlist[i]['category'])
+    data['num_checkin'].append(len(userlist[i]['checkin']))
+    data['ave_checkin'].append(np.mean(userlist[i]['checkin']))
+    data['var_checkin'].append(np.var(userlist[i]['checkin']))  
+    data['entropy_hour'].append(calc_ent(data1)) 
+    data['entropy_day'].append(calc_ent(data2)) 
+    data['entropy_month'].append(calc_ent(data3)) 
+    data['entropy_category'].append(calc_ent(data4)) 
+    for key,value in userlist[i]['country'].items():
+        if(value == max(userlist[i]['country'].values())):
+            data['main_country'].append(key)
+            break
+    data['num_poi_visit'].append(len(userlist[i]['poi']))
+    a = np.mat(userlist[i]['lalong'])
+    temp=np.mean(a,axis=0)
+    data['ave_latitude'].append(temp[0,0])
+    data['ave_longitude'].append(temp[0,1])
+    temp=np.var(a,axis=0)
+    data['var_latitude'].append(temp[0,0])
+    data['var_longitude'].append(temp[0,1])
+    data['constraint'].append(float(shs_constraint[i]))
+    data['effective_size'].append(float(shs_effective_size[i]))
+    data['efficiency'].append(float(shs_efficiency[i]))
+    data['hierarchy'].append(float(shs_hierarchy[i]))
+    data['betweenness_centrality'].append(shs_betweenness_centrality[i])
+    #data['closeness_centrality'].append(shs_closeness_centrality[i])
+    #data['flowbetweenness_centrality'].append(shs_flowbetweenness_centrality[i])
+    data['degree'].append(shs_degree[i])
+    if i in U1:
+        data['label'].append(1)
+    elif i in U3 :
+        data['label'].append(0)
+        
+
+
+data=pd.DataFrame(data)
+data = pd.get_dummies(data)
+data_x = data.drop('label',axis = 1)
+data_y = data['label']
+smo = SMOTE(random_state=42)
+data_x, data_y = smo.fit_resample(data_x, data_y)
+Xtrain, Xtest, Ytrain, Ytest = train_test_split(data_x,data_y,test_size=0.3,random_state=0)
+
+
+
+parameters_grid_XGB = {    
+    'learning_rate': [0.01, 0.1, 0.3],
+    'n_estimators': [10, 50, 100], 
+    'max_depth': [4,6,8], 
+    'min_child_weight':[1,3,5],
+    'subsample': [0.6,0.8,1],
+    'colsample_bytree':[0.6,0.8,1], 
+    'gamma':[0,2,4],
+    
+    'booster': ['gbtree'],
+    'num_class':[2],
+    'eval_metric':["auc"],
+    'objective':['multi:softprob'],
+    'seed':[0],
+    'use_label_encoder':['False']
+}
+XGB = XGBClassifier()
+grid = GridSearchCV(XGB, parameters_grid_XGB, cv=5, scoring='precision')
+grid.fit(Xtrain, Ytrain)
+
+print("Best parameters set found on development set:")
+print()
+print(grid.best_params_)
+print()
+print("Grid scores on development set:")
+print()
+means = grid.cv_results_['mean_test_score']
+stds = grid.cv_results_['std_test_score']
+for mean, std, params in zip(means, stds, grid.cv_results_['params']):
+    print("%0.3f (+/-%0.03f) for %r"
+          % (mean, std * 2, params))
+print()
+print("Detailed classification report:")
+print()
+print("The model is trained on the full development set.")
+print("The scores are computed on the full evaluation set.")
+print()
+bclf = grid.best_estimator_
+bclf.fit(Xtrain, Ytrain)
+y_true = Ytest
+y_pred = bclf.predict(Xtest)
+y_pred_pro = bclf.predict_proba(Xtest)
+y_scores = pd.DataFrame(y_pred_pro, columns=bclf.classes_.tolist())[1].values
+print(classification_report(y_true, y_pred))
+auc_value = roc_auc_score(y_true, y_scores)
+print("auc_value:")
+print(auc_value)
+
+
+# 变量重要性排序可视化
+plot_importance(bclf,title='Feature importance ranking', xlabel='score', ylabel='feature',)
+pyplot.show()
